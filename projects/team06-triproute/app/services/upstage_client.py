@@ -444,14 +444,22 @@ def embed_passages(texts: List[str]) -> List[List[float]]:
     return [item.embedding for item in response.data]
 
 
-def parse_user_input_mock(user_input: str) -> dict[str, Any]:
+def parse_user_input_mock(
+    user_input: str,
+    previous_condition_summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
     Solar API 호출 실패 시 사용하는 Mock 입력 파서입니다.
 
-    season/duration/travel_style/schedule_intensity는 고정 데모 값을 그대로 쓰지만,
-    city/prefer_local/prefer_budget/is_peak_season만큼은 키워드 매칭으로 실제
-    user_input을 반영합니다.
+    첫 턴(previous_condition_summary 없음)은 고정 데모 값(DEFAULT_PARSE_RESULT)을
+    기본값으로 쓰지만, 후속 턴은 직전 condition_summary를 기본값으로 삼는다 — 안 그러면
+    "2일차 위치 바꿔줘"처럼 도시를 다시 언급하지 않는 후속 요청에서 city/season/duration/
+    travel_style이 전부 고정 데모 값(강릉 등)으로 리셋되는 문제가 있었다.
+    city/prefer_local/prefer_budget/is_peak_season는 이번 user_input에서 실제로
+    감지된 신호가 있을 때만 덮어쓴다.
     """
+
+    base = {**DEFAULT_PARSE_RESULT, **(previous_condition_summary or {})}
 
     move_source_day, move_source_slot, move_destination_day, move_destination_slot = (
         _detect_move_request(user_input)
@@ -471,11 +479,12 @@ def parse_user_input_mock(user_input: str) -> dict[str, Any]:
             target_time_slot = None
 
     return {
-        **DEFAULT_PARSE_RESULT,
-        "city": _detect_city(user_input) or DEFAULT_PARSE_RESULT["city"],
-        "prefer_local": _detect_prefer_local(user_input),
-        "prefer_budget": _detect_prefer_budget(user_input),
-        "is_peak_season": _detect_peak_season(user_input),
+        **base,
+        "city": _detect_city(user_input) or base.get("city") or DEFAULT_PARSE_RESULT["city"],
+        "prefer_local": _detect_prefer_local(user_input) or bool(base.get("prefer_local", False)),
+        "prefer_budget": _detect_prefer_budget(user_input) or bool(base.get("prefer_budget", False)),
+        "is_peak_season": _detect_peak_season(user_input)
+        or bool(base.get("is_peak_season", DEFAULT_PARSE_RESULT["is_peak_season"])),
         "target_day": target_day,
         "target_time_slot": target_time_slot,
         "move_source_day": move_source_day,
@@ -685,7 +694,7 @@ def parse_trip_request(
 
     if _detect_prompt_injection(user_input):
         # 의심되는 입력은 Solar(실제 LLM)에 아예 보내지 않고 Mock parser로만 처리한다.
-        fallback = parse_user_input_mock(user_input)
+        fallback = parse_user_input_mock(user_input, previous_condition_summary)
         return fallback, [
             "입력에서 프롬프트 인젝션 의심 패턴이 감지되어 안전한 파서로 처리했습니다."
         ]
@@ -695,7 +704,7 @@ def parse_trip_request(
         return parsed, []
 
     except Exception as error:
-        fallback = parse_user_input_mock(user_input)
+        fallback = parse_user_input_mock(user_input, previous_condition_summary)
 
         warnings = [
             (
