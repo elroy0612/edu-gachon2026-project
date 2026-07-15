@@ -75,35 +75,35 @@
 
 ---
 
-## 2. 연관 관광지 정보 (`app/services/related_place_api.py`)
+## 2. 연관 관광지 정보 — 현재 미사용 (`TarRlteTarService1`)
 
-- data.go.kr 서비스 ID: `15128560` (한국관광공사_관광지별 연관 관광지 정보)
-- 서비스명(영문): `TarRlteTarService1`
-- Base URL: `https://apis.data.go.kr/B551011/TarRlteTarService1`
-- TourAPI(15101578)와는 **별개 서비스**지만, data.go.kr 계정당 인증키가 1개라 `TOUR_API_KEY`를
-  그대로 재사용함 (활용신청만 서비스별로 따로 진행). `config.py`에 `RELATED_PLACE_API_KEY`라는
-  별도 필드가 있었는데 `.env`에 값이 없어서 항상 `None`이었음 — 삭제하고 `TOUR_API_KEY`로 통일함.
-- **일반 TourAPI(`KorService2`)와 오퍼레이션 이름이 겹치지 않게 주의**: 이 서비스는
-  `KorService1`/`KorService2`와 무관한 완전히 다른 서비스(`TarRlteTarService1`)임.
-  Swagger에 보이는 오퍼레이션 이름이 `areaBasedList1`/`searchKeyword1`이라고 TourAPI의
-  `KorService1`로 착각하면 안 됨 (실제로 `KorService1`은 500 에러 남).
+> **현재 코드에서 사용하지 않음.** 아래는 왜 이 API 대신 여행코스 데이터를 쓰게 됐는지에 대한
+> 참고 기록이다. `app/services/related_place_api.py`는 삭제됐고, 연관 관광지 추천은
+> `app/agents/route_planner.py`의 `_search_course_related_places()`가 TourAPI 여행코스
+> (`contentTypeId=25`) 데이터를 콘텐츠 ID로 대조하는 방식으로 대체 구현되어 있다
+> (`docs/tech_architecture.md` 4-2절 참고).
 
-### 사용 중인 오퍼레이션
+- data.go.kr 서비스 ID `15128560`(한국관광공사_관광지별 연관 관광지 정보, `TarRlteTarService1`)을
+  T맵 내비게이션 기반 연관 관광지 조회에 쓰려 했으나, **데이터셋 자체가 "2024.05~2025.04"까지만
+  제공되는 한시적 데이터라 현재 시점엔 어떤 조회를 해도 0건만 반환**됨을 확인했다. 코드로
+  해결할 수 없는 데이터 수명 문제라 대체 방안으로 전환했다.
+- 대체 방안(여행코스 데이터)으로 전환 후 도시별 연관 관광지 후보 수(수정 전 → 수정 후):
 
-| 오퍼레이션 | 용도 | 필수 파라미터 |
-| --- | --- | --- |
-| `areaBasedList1` | 시군구 내 관광지들의 연관 관광지 목록 조회 | `baseYm`, `areaCd`, `signguCd` |
-| `searchKeyword1` | 관광지명 검색 후 그 연관 관광지 목록 조회 | `baseYm`, `areaCd`, `signguCd`, `keyword` |
+| 도시 | 이전 | 현재 |
+|---|---|---|
+| 강릉 | 2 | 10 |
+| 속초 | 2 | 6 |
+| 춘천 | 2 | 5 |
+| 부산 | 1 | 13 |
+| 제주 | 1 | 14 |
+| 경주 | 0 | 8 |
+| 전주 | 0 | 4 |
+| 여수 | 1 | 8 |
+| 인천 | 1 | 8 |
+| 서울 | 0 | 19 |
 
-- `baseYm`(기준연월, YYYYMM 형식)은 필수지만, **실제로는 어떤 달 값을 넣어도 같은 최신
-  스냅샷을 반환함** (202504~202606 다 테스트해봄). 정확한 유효 범위는 알 수 없으나
-  일단 아무 값이나 넣어도 문제는 없음 → `related_place_api.py`의 `DEFAULT_BASE_YM` 참고.
-- `areaCd`/`signguCd`는 법정동코드 기준. 강원특별자치도=`51`, 강릉시=`51150`.
-  다른 도시 코드가 필요해지면 행정표준코드관리시스템에서 조회해야 함.
-- 응답 핵심 필드: `tAtsNm`(기준 관광지명), `rlteTatsNm`(연관 관광지명), `rlteRank`(연관순위),
-  `rlteCtgryLclsNm`(연관 카테고리: 관광지/음식/숙박 등).
-- `searchKeyword1`으로 "경포대" 검색 시 연관 관광지로 경포해변·강릉중앙시장·오죽헌·안목해변이
-  나옴 — README 예시 일정표와 거의 일치해서 실제 추천 로직에 바로 쓸 만함.
+(총 96건. 여행코스는 `addr1`이 없는 경우가 대부분이라, 기존 "주소 없으면 제외" 수집 필터에
+걸러지고 있던 것이 원인이었음 — 여행코스는 도시명을 대체 주소로 저장하도록 수정 후 재수집.)
 
 ---
 
@@ -158,7 +158,7 @@
   Step 4(RAG 구현) 시작하기 전에 팀원 중 Supabase 프로젝트 소유자가 실행해야 함.
 - pgvector 테이블 만들 때 벡터 컬럼 차원은 **4096**으로 맞출 것 (Upstage 임베딩 차원, 위 4번 참고).
 
-### pgvector 세팅 완료 (SQL Editor에서 수동 실행함)
+### pgvector 세팅 (SQL Editor에서 수동 실행, 현재 라이브 스키마 기준)
 
 ```sql
 create extension if not exists vector;
@@ -175,29 +175,45 @@ create table if not exists places (
     event_end_date date,
     rating numeric,
     review_count integer,
+    latitude double precision,
+    longitude double precision,
     created_at timestamptz default now()
 );
 
 create or replace function match_places(
-    query_embedding vector(4096),
-    match_count int default 5
+    query_embedding vector,
+    match_count int default 5,
+    city_filter text default null
 )
 returns table (
     id bigint,
     content_id text,
     title text,
     overview text,
-    similarity float
+    address text,
+    category text,
+    rating numeric,
+    review_count integer,
+    latitude double precision,
+    longitude double precision,
+    similarity double precision
 )
 language sql stable
 as $$
-    select id, content_id, title, overview,
+    select id, content_id, title, overview, address, category, rating, review_count, latitude, longitude,
            1 - (embedding <=> query_embedding) as similarity
     from places
+    where (city_filter is null or address like '%' || city_filter || '%')
+      and (category is null or category <> '여행코스')
     order by embedding <=> query_embedding
     limit match_count;
 $$;
 ```
+
+`city_filter`로 도시별 검색을 제한하고, `category <> '여행코스'`로 코스 설명 텍스트가 개별
+방문 장소처럼 잘못 추천되는 걸 막는다. `latitude`/`longitude`는 수집 시점(`ingest_city`)에
+TourAPI 좌표를 같이 저장해서, RAG 검색 결과에 좌표가 바로 포함되게 하기 위해 추가됨(이전엔
+저장하지 않아 매번 `detailCommon2`로 재조회해야 했음).
 
 - **HNSW/IVFFlat 인덱스는 안 만듦.** pgvector의 인덱스는 최대 2000차원까지만 지원하는데
   Upstage 임베딩은 4096차원이라 인덱스 생성 자체가 에러남

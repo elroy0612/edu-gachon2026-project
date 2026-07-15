@@ -1,7 +1,7 @@
 # app/services/chat_store.py
 #
 # 로그인한 사용자의 대화 세션/메시지를 Supabase(chat_sessions/chat_messages)에
-# 저장·조회한다. 테이블 DDL은 docs/sql/chat_history.sql 참고.
+# 저장·조회한다.
 #
 # 백엔드는 Supabase service_role 키로 접속해 RLS를 우회하므로, "이 세션이 정말
 # 이 user_id 소유인가"는 여기서 직접 확인해야 한다 — 그렇지 않으면 조작되거나

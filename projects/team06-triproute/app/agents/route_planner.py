@@ -2046,9 +2046,8 @@ def build_incremental_route_plan(
     기간 연장("3일로 늘려줘") 후속 요청 전용 Route Planner.
 
     build_route_plan을 처음부터 다시 돌리면 이미 확정된 Day 1..previous_days의 장소까지
-    통째로 다른 곳으로 바뀌는 문제가 있었다(docs/session_2026-07-14_summary.md의 "논의만
-    하고 보류된 것" 항목). 대신 기존 daily_schedule/route_summary는 그대로 두고, 늘어난
-    날짜만큼의 시간대 슬롯만 새로 채워서 뒤에 이어붙인다.
+    통째로 다른 곳으로 바뀌는 문제가 있었다. 대신 기존 daily_schedule/route_summary는
+    그대로 두고, 늘어난 날짜만큼의 시간대 슬롯만 새로 채워서 뒤에 이어붙인다.
 
     새 날짜 후보에 필요한 정보(좌표 기반 지리적 군집, 기존 장소와의 중복 제외)는 previous_result
     (finalize_node가 만든 결과 형태: daily_schedule/route_summary만 있고 selected_places/

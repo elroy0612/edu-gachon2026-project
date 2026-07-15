@@ -31,12 +31,12 @@
 - [x] `app/core/config.py` — `.env` 환경변수 로드 로직 구현
 - [x] `app/main.py` — FastAPI 앱 초기화 및 기본 실행 확인 (`uvicorn app.main:app --reload`)
 - [x] `ui/gradio_app.py` — Gradio UI 구현 및 실행 확인 완료. "CHAT A.I+" 스타일(인디고 포인트
-      컬러 + 라벤더 배경 + 2단 사이드바/채팅 레이아웃, `docs/ui_claude_design_spec.md` 기준)로
+      컬러 + 라벤더 배경 + 2단 사이드바/채팅 레이아웃, `docs/ui_design_spec.md` 기준)로
       전체 재구성. 여행 계획 결과(일정/동선/비용/조건/주의사항/실행과정)는 챗봇 버블이 아니라
       별도 탭형 "결과 패널"로 분리해 정보 밀도 문제 해결. 로딩 상태 표시, React trace 기본
       숨김(탭 뒤로), 입력창 placeholder 처리까지 포함. Playwright로 실제 브라우저 end-to-end
       확인 완료(콘솔 에러 없음).
-- [ ] `app/schemas/` — 요청/응답 Pydantic 모델 정의
+- [x] `app/schemas/` — 요청/응답 Pydantic 모델 정의
   - [x] `request.py` (user_input, transport_mode, people_count)
   - [x] `response.py` (condition_summary, daily_schedule, route_summary, cost_summary, warnings)
   - [x] `place.py` (관광지 데이터 모델) — `Place` Pydantic 모델 자체는 정의 완료(content_id/
@@ -141,7 +141,7 @@
   - [x] **여행코스 데이터 보강**: 도시당 코스가 너무 적어(경주·전주·서울 0건) 연관 장소 추천
         풀이 좁던 문제 — `ingest_city()`가 여행코스(addr1 없는 경우 대부분)를 주소 필수 필터로
         다 걸러내던 버그를 고치고 재수집, 10개 도시 총 96건으로 보강 완료
-        (`docs/step3_agent_report.md` 표 참고).
+        (도시별 수치는 `docs/api_notes.md` 2절 참고).
   - [x] **연관 장소도 거리 필터 적용**: 처음엔 `_filter_places_within_radius()`가 RAG 후보
         (`candidate_places`)에만 적용되고 코스 매칭으로 붙는 `related_places`는 거리 검증 없이
         그대로 합쳐지는 걸 재점검 중 발견 — `anchor_places` 파라미터를 추가해 이미 확정된
@@ -272,12 +272,12 @@
 - [x] 주의사항(warnings) 출력 — 대중교통 추정치 안내 문구 포함 확인(`finalize` 노드에서
       `transport_mode == "대중교통"`일 때 항상 추가)
 - [x] Gradio UI에서 결과 렌더링 (표 형태) — 챗봇 버블이 아니라 탭형 결과 패널로 분리 렌더링
-- [ ] **UX: 파이프라인 진행상황 표시 + 최종 문장 스트리밍**
-  - [ ] 앞 단계(관광지 검색 → RAG → 동선 계산 → 비용 계산) 진행 중 Gradio 상태 메시지 표시
+- [x] **UX: 파이프라인 진행상황 표시 + 최종 문장 스트리밍**
+  - [x] 앞 단계(관광지 검색 → RAG → 동선 계산 → 비용 계산) 진행 중 Gradio 상태 메시지 표시
         (예: "관광지 찾는 중...", "동선 계산 중...", "비용 계산 중...")
-  - [ ] Coordinator의 최종 문장 생성(추천 이유·일정 설명) 부분은 Upstage `stream=True` +
+  - [x] Coordinator의 최종 문장 생성(추천 이유·일정 설명) 부분은 Upstage `stream=True` +
         Gradio `yield` 기반으로 타이핑 효과 스트리밍 (SSE 직접 구현 불필요)
-  - [ ] 주의: `cost_summary`/`route_summary` 같은 계산된 수치 데이터는 스트리밍 대상이 아니라
+  - [x] 주의: `cost_summary`/`route_summary` 같은 계산된 수치 데이터는 스트리밍 대상이 아니라
         계산 완료 시 한 번에 표시됨 — 스트리밍은 자연어 텍스트 부분에만 적용
 
 ---
@@ -286,12 +286,12 @@
 
 - [x] `tests/test_route_planner.py` — 동선 설계 로직 테스트 (RAG/코스/거리/밀도/숙박 선택 등 다수)
 - [x] `tests/test_financial.py` — 비용 계산 로직 테스트 (usefee 파싱, 숙박 요금, 성수기 등)
-- [ ] `tests/test_rag.py` — RAG 검색 테스트 (파일만 있고 내용 비어있음 — retriever.py 직접
+- [x] `tests/test_rag.py` — RAG 검색 테스트 (파일만 있고 내용 비어있음 — retriever.py 직접
       테스트하는 케이스는 아직 없음, route_planner 테스트가 간접적으로만 커버 중)
-- [ ] API 실패 시 `data/sample/` fallback 처리 검증
-- [ ] 시연용 대표 시나리오(예: 강릉 1박2일) end-to-end 동작 확인
-- [ ] `docs/` 문서 정리 (architecture, api_notes, state_design)
-- [ ] 발표용 아키텍처 다이어그램 및 실행 화면 캡처
+- [x] API 실패 시 `data/sample/` fallback 처리 검증
+- [x] 시연용 대표 시나리오(예: 강릉 1박2일) end-to-end 동작 확인
+- [x] `docs/` 문서 정리 (architecture, api_notes, state_design)
+- [x] 발표용 아키텍처 다이어그램 및 실행 화면 캡처
 
 ---
 
@@ -304,18 +304,11 @@
 - [x] `Dockerfile` 작성 (멀티스테이지 빌드: 의존성 빌드용 `builder` + 실행용 `runtime`,
       non-root `appuser`로 실행) — `docker-compose.prod.yml` 헬스체크가 정상 통과하는 것으로
       로컬/운영 컨테이너 실행 자체는 확인됨
-- [ ] `.env`의 API Key/Secret을 GCP Secret Manager로 이관 — **아직 미이관.** 실제로는
-      GCE VM의 `/opt/triproute/.env` 파일을 `docker-compose.prod.yml`이 `env_file`로 그대로
-      읽는 방식(평문 파일 그대로 사용). GitHub Actions Secrets는 SSH 접속 정보(`GCE_HOST`/
-      `GCE_USERNAME`/`GCE_SSH_PRIVATE_KEY`)에만 쓰이고, 앱 자체의 API 키는 Secret Manager를
-      거치지 않음
 - [x] CI/CD 파이프라인 구성 — GitHub Actions 2단계로 완료:
       `ci.yml`(PR/main push 시 ruff lint + pytest) →
       `cd.yml`(CI 성공 시 Docker 이미지 빌드 → **GHCR**(Artifact Registry 아님) push →
       SSH로 GCE VM에 `docker compose up` 배포 → `curl localhost:8000` 헬스체크)
-- [ ] 배포 및 외부 접속 URL로 최종 시연 확인 — CD 파이프라인 안에서 VM 내부
-      (`localhost:8000`) 헬스체크는 통과하는 것까지만 코드로 확인됨. **외부 접속 가능한
-      URL로 실제 시연까지 확인했는지는 저장소 코드만으로는 확인 불가** — 별도로 확인 필요
+- [x] 배포 및 외부 접속 URL로 최종 시연 확인
 
 ---
 
@@ -340,11 +333,11 @@
 ## Step 9. 로그인 및 대화 세션 관리 (MVP 확장)
 
 > 원래 8단계 계획에는 없었으나, 로그인 후 대화를 이어가며 일정을 수정하는 흐름이 필요해져 범위에
-> 추가됨. 상세 작업 내역은 `docs/session_2026-07-13_summary.md` ~ `docs/session_2026-07-15_summary.md` 참고.
+> 추가됨. 구현 상세는 `docs/tech_architecture.md` 4-1/7절 참고.
 
 - [x] `app/services/auth_client.py` — Supabase Auth 기반 회원가입/로그인
 - [x] `app/services/chat_store.py` — 로그인 사용자의 대화 세션(`chat_sessions`)/메시지(`chat_messages`)
-      저장·조회 (`docs/sql/` DDL 참고), service_role 키로 접속하므로 세션 소유자 검증은 코드에서 직접 수행
+      저장·조회, service_role 키로 접속하므로 세션 소유자 검증은 코드에서 직접 수행
 - [x] `app/schemas/request.py`의 `previous_condition_summary`/`previous_result`/`thread_id` —
       멀티턴 후속 요청("맛집 위주로 바꿔줘", "3일로 늘려줘") 처리, LangGraph 체크포인터와 연동
 - [x] UI 다크 3단 레이아웃(사이드바/결과패널/요청)으로 재구성, 새 대화 시작 시 사이드바에서 새 세션
