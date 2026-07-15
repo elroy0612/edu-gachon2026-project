@@ -281,11 +281,11 @@ def _detect_move_request(
 
 def _normalize_daily_preferences(value: Any) -> list[dict[str, Any]]:
     """
-    Solar가 뽑아낸 daily_preferences(일차별 취향/일정 강도)를 검증하고 정규화한다.
-    day가 없거나 양의 정수가 아닌 항목, day가 중복된 항목(뒤에 나온 것 우선)은 버려서
-    route_planner가 이상한 값으로 검색하지 않게 한다. Mock parser는 이 구조를 규칙
-    기반으로 뽑아내기 사실상 불가능하므로 항상 빈 리스트를 반환해 전체 공통 조건으로
-    자연스럽게 대체되게 한다(parse_user_input_mock 참고).
+    Solar가 뽑아낸 daily_preferences(일차별 취향/일정 강도/필수 방문지)를 검증하고
+    정규화한다. day가 없거나 양의 정수가 아닌 항목, day가 중복된 항목(뒤에 나온 것
+    우선)은 버려서 route_planner가 이상한 값으로 검색하지 않게 한다. Mock parser는
+    이 구조를 규칙 기반으로 뽑아내기 사실상 불가능하므로 항상 빈 리스트를 반환해
+    전체 공통 조건으로 자연스럽게 대체되게 한다(parse_user_input_mock 참고).
     """
     if not isinstance(value, list):
         return []
@@ -309,13 +309,24 @@ def _normalize_daily_preferences(value: Any) -> list[dict[str, Any]]:
         if not isinstance(schedule_intensity, str) or not schedule_intensity:
             schedule_intensity = None
 
-        if travel_style is None and schedule_intensity is None:
+        must_include_places = item.get("must_include_places")
+        if isinstance(must_include_places, str):
+            must_include_places = [must_include_places]
+        if isinstance(must_include_places, list):
+            must_include_places = [
+                str(p).strip() for p in must_include_places if str(p).strip()
+            ] or None
+        else:
+            must_include_places = None
+
+        if travel_style is None and schedule_intensity is None and must_include_places is None:
             continue
 
         by_day[day] = {
             "day": day,
             "travel_style": travel_style,
             "schedule_intensity": schedule_intensity,
+            "must_include_places": must_include_places,
         }
 
     return list(by_day.values())
@@ -489,6 +500,14 @@ def parse_user_input_mock(
         "target_time_slot": target_time_slot,
         "move_source_day": move_source_day,
         "move_source_time_slot": move_source_slot,
+        # 장소 이름만으로 원본을 지칭하는 건("안목해변을 3일차로 옮겨줘") 임의 어휘라
+        # 규칙 기반으로 신뢰성 있게 못 뽑아낸다 — Solar 파싱 성공을 전제로 하는 필드다
+        # (parse_user_input_mock 자체는 이 필드를 채우지 않는다).
+        "move_source_place_name": None,
+        # 날짜 지정 장소 추가("2일차에 OO 추가해줘")도 임의 어휘 추출이 필요해 Mock은
+        # 지원하지 않는다(daily_preferences/move_source_place_name과 동일한 이유).
+        "add_place_name": None,
+        "add_place_day": None,
         "move_destination_day": move_destination_day,
         "move_destination_time_slot": move_destination_slot,
         # Mock parser는 규칙 기반이라 "일차별로 다른 취향" 같은 중첩 구조를 신뢰성 있게
@@ -599,10 +618,19 @@ def _normalize_parse_result(
         "target_time_slot": _normalize_target_time_slot(data.get("target_time_slot")),
         "move_source_day": _normalize_target_day(data.get("move_source_day")),
         "move_source_time_slot": _normalize_movable_time_slot(data.get("move_source_time_slot")),
+        "move_source_place_name": (
+            str(data.get("move_source_place_name")).strip()
+            if data.get("move_source_place_name")
+            else None
+        ),
         "move_destination_day": _normalize_target_day(data.get("move_destination_day")),
         "move_destination_time_slot": _normalize_movable_time_slot(
             data.get("move_destination_time_slot")
         ),
+        "add_place_name": (
+            str(data.get("add_place_name")).strip() if data.get("add_place_name") else None
+        ),
+        "add_place_day": _normalize_target_day(data.get("add_place_day")),
         "daily_preferences": _normalize_daily_preferences(data.get("daily_preferences")),
         "_parser": "solar",
     }

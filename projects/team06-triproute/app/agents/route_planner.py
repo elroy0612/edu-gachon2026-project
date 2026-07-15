@@ -1631,15 +1631,22 @@ def _search_day_partitioned_candidates(
     travel_style: List[str],
     prefer_local: bool,
     day_travel_style_overrides: Dict[int, List[str]],
+    day_must_include_places: Dict[int, List[Place]] | None = None,
 ) -> Tuple[List[Place], str]:
     """
-    daily_preferences로 일차별 취향이 지정된 경우("2일차는 액티비티 위주") 전용 후보 검색.
+    daily_preferences로 일차별 취향/필수 방문지가 지정된 경우("2일차는 액티비티 위주",
+    "2일차에는 국립경주박물관 가고 싶어") 전용 후보 검색.
 
     day_travel_style_overrides에 없는 날짜는 전체 공통 travel_style을 그대로 쓴다.
     day 하나마다 그 날의 슬롯 수만큼만 별도로 취향 검색을 하고(단일 풀에서 순위대로
     나눠 갖는 기존 방식과 달리), 날짜 순서 그대로 이어붙인다 — _build_time_slots도
     Day 1, Day 2, ... 순서로 슬롯을 만들기 때문에, 이 순서를 맞춰야 뒤에서
     candidate_places[i]가 time_slots[i]에 정확히 대응된다.
+
+    day_must_include_places에 그 날짜의 필수 방문지가 있으면 취향 검색보다 우선해서
+    그 날짜 슬롯 맨 앞에 배치한다(슬롯 수를 넘으면 뒤쪽은 잘라낸다 — 날짜별 슬롯 수를
+    넘겨서 다음 날짜 후보를 밀어내면 인덱스 정렬이 깨지기 때문). 나머지 슬롯만 기존과
+    동일하게 취향 검색으로 채운다.
 
     지리적 군집화(_filter_places_within_radius)도 날짜 그룹마다 독립적으로 적용한다
     (전역 하나로 묶으면 "Day 2는 완전히 다른 지역의 액티비티"인 경우 Day 1 근처가 아니라는
@@ -1653,6 +1660,8 @@ def _search_day_partitioned_candidates(
         if day not in day_slot_counts:
             day_order.append(day)
         day_slot_counts[day] = day_slot_counts.get(day, 0) + 1
+
+    day_must_include_places = day_must_include_places or {}
 
     all_candidates: List[Place] = []
     existing_keys: set[str] = set()
@@ -1671,51 +1680,63 @@ def _search_day_partitioned_candidates(
         slot_count = day_slot_counts[day]
         day_style = day_travel_style_overrides.get(day, travel_style)
 
-        rag_places = _exclude_existing(
-            _search_rag_places(
-                city=city, travel_style=day_style, prefer_local=prefer_local, max_places=slot_count
-            )
-        )
-        if rag_places:
-            day_candidates = _fill_missing_place_details(rag_places)
-            data_sources.add("rag")
-        else:
-            try:
-                day_candidates = _exclude_existing(
-                    _search_real_places(city=city, max_places=slot_count, travel_style=day_style)
-                )
-                data_sources.add("real_api")
-            except Exception:
-                day_candidates = []
-
-        if day_candidates:
-            day_candidates = _filter_places_within_radius(day_candidates)
-
-        day_candidates = day_candidates[:slot_count]
-        for place in day_candidates:
+        day_musts = _exclude_existing(day_must_include_places.get(day, []))[:slot_count]
+        for place in day_musts:
             existing_keys.add(_normalized_place_key(_get_place_name(place)))
 
-        if len(day_candidates) < slot_count:
-            if fallback_candidates is None:
-                fallback_rag = _search_rag_places(
-                    city=city, travel_style=travel_style, prefer_local=prefer_local,
-                    max_places=len(time_slots),
-                )
-                fallback_candidates = (
-                    _fill_missing_place_details(fallback_rag) if fallback_rag else []
-                )
-                data_sources.add("rag" if fallback_rag else "real_api")
+        remaining_slot_count = slot_count - len(day_musts)
 
-            for place in fallback_candidates:
-                if len(day_candidates) >= slot_count:
-                    break
-                key = _normalized_place_key(_get_place_name(place))
-                if key in existing_keys:
-                    continue
-                day_candidates.append(place)
-                existing_keys.add(key)
+        if remaining_slot_count > 0:
+            rag_places = _exclude_existing(
+                _search_rag_places(
+                    city=city, travel_style=day_style, prefer_local=prefer_local,
+                    max_places=remaining_slot_count,
+                )
+            )
+            if rag_places:
+                day_candidates = _fill_missing_place_details(rag_places)
+                data_sources.add("rag")
+            else:
+                try:
+                    day_candidates = _exclude_existing(
+                        _search_real_places(
+                            city=city, max_places=remaining_slot_count, travel_style=day_style
+                        )
+                    )
+                    data_sources.add("real_api")
+                except Exception:
+                    day_candidates = []
 
-        all_candidates.extend(day_candidates)
+            if day_candidates:
+                day_candidates = _filter_places_within_radius(day_candidates)
+
+            day_candidates = day_candidates[:remaining_slot_count]
+            for place in day_candidates:
+                existing_keys.add(_normalized_place_key(_get_place_name(place)))
+
+            if len(day_candidates) < remaining_slot_count:
+                if fallback_candidates is None:
+                    fallback_rag = _search_rag_places(
+                        city=city, travel_style=travel_style, prefer_local=prefer_local,
+                        max_places=len(time_slots),
+                    )
+                    fallback_candidates = (
+                        _fill_missing_place_details(fallback_rag) if fallback_rag else []
+                    )
+                    data_sources.add("rag" if fallback_rag else "real_api")
+
+                for place in fallback_candidates:
+                    if len(day_candidates) >= remaining_slot_count:
+                        break
+                    key = _normalized_place_key(_get_place_name(place))
+                    if key in existing_keys:
+                        continue
+                    day_candidates.append(place)
+                    existing_keys.add(key)
+        else:
+            day_candidates = []
+
+        all_candidates.extend(day_musts + day_candidates)
 
     if "rag" in data_sources:
         data_source = "rag"
@@ -1767,6 +1788,13 @@ def build_route_plan(
         for pref in daily_preferences
         if pref.get("travel_style")
     }
+    # "2일차에는 국립경주박물관 가고 싶어"처럼 처음 계획할 때 며칠차인지와 함께 지정된
+    # 필수 방문지 이름(장소 이름 자체는 아래에서 _resolve_must_include_place로 해석).
+    day_must_include_names = {
+        pref["day"]: list(pref["must_include_places"])
+        for pref in daily_preferences
+        if pref.get("must_include_places")
+    }
 
     travel_days = _parse_travel_days(duration)
     time_slots = _build_time_slots(
@@ -1793,16 +1821,37 @@ def build_route_plan(
             )
         must_include_places_list = [place for place in resolved_places if place is not None]
 
-    if day_travel_style_overrides:
-        # daily_preferences로 일차별 취향이 지정된 경우: 날짜 그룹별로 따로 검색하고
-        # 날짜 순서대로 이어붙인다. 이 경로는 그룹마다 이미 지리적 군집화가 끝났으므로
-        # (아래 else 분기의) 전역 재필터링은 다시 거치지 않는다.
+    day_must_include_places: Dict[int, List[Place]] = {}
+    if day_must_include_names:
+        # 날짜별 필수 방문지도 must_include_names와 동일하게 병렬로 이름을 해석한다.
+        # (day, name) 쌍으로 펼쳐서 한 번에 조회하고, 결과를 다시 날짜별로 묶는다.
+        flat_requests = [
+            (day, p_name)
+            for day, p_names in day_must_include_names.items()
+            for p_name in p_names
+        ]
+        with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_DETAIL_LOOKUPS) as executor:
+            resolved = list(
+                executor.map(
+                    lambda req: _resolve_must_include_place(req[1], city, travel_style),
+                    flat_requests,
+                )
+            )
+        for (day, _p_name), place in zip(flat_requests, resolved):
+            if place is not None:
+                day_must_include_places.setdefault(day, []).append(place)
+
+    if day_travel_style_overrides or day_must_include_places:
+        # daily_preferences로 일차별 취향/필수 방문지가 지정된 경우: 날짜 그룹별로 따로
+        # 검색하고 날짜 순서대로 이어붙인다. 이 경로는 그룹마다 이미 지리적 군집화가
+        # 끝났으므로(아래 else 분기의) 전역 재필터링은 다시 거치지 않는다.
         candidate_places, data_source = _search_day_partitioned_candidates(
             city=city,
             time_slots=time_slots,
             travel_style=travel_style,
             prefer_local=prefer_local,
             day_travel_style_overrides=day_travel_style_overrides,
+            day_must_include_places=day_must_include_places,
         )
 
         if not candidate_places:
@@ -2454,10 +2503,11 @@ def build_place_move_route_plan(
     transport_mode: str,
     people_count: int,
     previous_result: Dict[str, Any],
-    source_day: int,
+    source_day: int | None,
     source_time_slot: str | None,
     destination_day: int,
     destination_time_slot: str | None,
+    source_place_name: str | None = None,
 ) -> Dict[str, Any]:
     """
     장소 이동("2일차 관광지를 1일차로 옮겨줘") 후속 요청 전용 Route Planner.
@@ -2473,6 +2523,10 @@ def build_place_move_route_plan(
     그 날짜의 첫 번째 이동 가능한(체크인 아닌) 슬롯을 대상으로 삼는다. source에 채울
     새 장소를 못 찾으면(후보 없음) 이동 자체를 취소하고 기존 일정을 그대로 유지한다
     (destination만 바뀌고 source는 빈 채로 남는 반쪽짜리 상태를 피하기 위함).
+
+    source_day가 없고 source_place_name만 있으면("안목해변을 3일차로 옮겨줘"처럼 원본
+    날짜를 안 말한 경우) 직전 일정(previous_daily_schedule)에서 그 이름과 일치하는
+    항목을 찾아 day/time_slot을 역으로 알아낸다. 못 찾으면 이동 없이 기존 일정을 유지한다.
     """
     previous_daily_schedule = list(previous_result.get("daily_schedule") or [])
     previous_route_summary = list(previous_result.get("route_summary") or [])
@@ -2496,6 +2550,39 @@ def build_place_move_route_plan(
     if not previous_daily_schedule:
         return build_route_plan(
             parsed=parsed, transport_mode=transport_mode, people_count=people_count
+        )
+
+    if source_day is None and source_place_name:
+        normalized_target = _normalized_place_key(source_place_name)
+        resolved_index = next(
+            (
+                i
+                for i, entry in enumerate(previous_daily_schedule)
+                if _normalized_place_key(entry.get("place_name") or "") == normalized_target
+            ),
+            None,
+        )
+        if resolved_index is None:
+            return _unchanged(
+                f"'{source_place_name}'을(를) 현재 일정에서 찾지 못해 "
+                "이동 없이 기존 일정을 그대로 유지했습니다."
+            )
+
+        resolved_entry = previous_daily_schedule[resolved_index]
+        resolved_day = _day_number(str(resolved_entry.get("day") or ""))
+        if not resolved_day:
+            return _unchanged(
+                f"'{source_place_name}'의 날짜 정보를 확인하지 못해 "
+                "이동 없이 기존 일정을 그대로 유지했습니다."
+            )
+
+        source_day = resolved_day
+        if source_time_slot is None:
+            source_time_slot = resolved_entry.get("time_slot")
+
+    if source_day is None:
+        return _unchanged(
+            "이동할 장소의 원본 날짜를 확인하지 못해 기존 일정을 그대로 유지했습니다."
         )
 
     def _find_index(day: int, time_slot: str | None) -> int | None:
@@ -2701,5 +2788,163 @@ def build_place_move_route_plan(
             f"Day {source_day}의 '{_get_place_name(moving_place)}'을(를) Day {destination_day}로 "
             f"옮겼습니다(Day {destination_day}에 있던 '{original_destination_name}'은 제외됨). "
             f"Day {source_day}의 빈 자리는 '{backfill_name}'(으)로 새로 채웠습니다."
+        ],
+    }
+
+
+# 신규 삽입 슬롯에 붙일 시간대 후보 순서. 이미 쓰인 시간대는 건너뛰고, 이 중 첫 번째로
+# 비어있는 것을 쓴다 — 음식점이면 식사 시간대(점심/저녁)를 우선한다.
+_GENERAL_SLOT_ORDER = ("오후", "늦은 오후", "오전", "저녁", "점심")
+_MEAL_SLOT_ORDER = ("점심", "저녁", "오후", "늦은 오후", "오전")
+
+
+def build_named_place_insertion_route_plan(
+    parsed: Dict[str, Any],
+    transport_mode: str,
+    people_count: int,
+    previous_result: Dict[str, Any],
+    place_name: str,
+    target_day: int,
+) -> Dict[str, Any]:
+    """
+    특정 날짜에 이름으로 지정한 장소를 반드시 추가하는 후속 요청
+    ("2일차에는 국립경주박물관을 꼭 추가해줘") 전용 Route Planner.
+
+    기존 일정은 그대로 두고, target_day의 마지막 슬롯 뒤에 새 장소를 하나 끼워 넣는다.
+    시간대는 명시되지 않으므로 카테고리(음식점 여부)와 그 날짜에 이미 쓰인 시간대를
+    보고 자동으로 고른다. target_day 자체가 일정에 없으면(예: 1박 2일인데 3일차를
+    지정) 추가하지 않고 기존 일정을 그대로 유지한다.
+    """
+    previous_daily_schedule = list(previous_result.get("daily_schedule") or [])
+    previous_route_summary = list(previous_result.get("route_summary") or [])
+
+    def _unchanged(extra_warning: str) -> Dict[str, Any]:
+        reconstructed = [_place_from_schedule_entry(e) for e in previous_daily_schedule]
+        return {
+            "candidate_places": [],
+            "rag_ranked_places": [],
+            "related_places": [],
+            "selected_places": reconstructed,
+            "route_summary": previous_route_summary,
+            "daily_schedule": previous_daily_schedule,
+            "lodging_place": next(
+                (p for p in reconstructed if p.get("category") == LODGING_CATEGORY), None
+            ),
+            "data_source": previous_result.get("condition_summary", {}).get("data_source", "rag"),
+            "warnings": [extra_warning],
+        }
+
+    if not previous_daily_schedule:
+        return build_route_plan(
+            parsed=parsed, transport_mode=transport_mode, people_count=people_count
+        )
+
+    city = str(parsed.get("city") or "강릉")
+    travel_style = list(parsed.get("travel_style") or [])
+
+    existing_keys = {
+        _normalized_place_key(entry.get("place_name") or "") for entry in previous_daily_schedule
+    }
+    if _normalized_place_key(place_name) in existing_keys:
+        return _unchanged(
+            f"'{place_name}'은(는) 이미 일정에 포함되어 있어 추가하지 않았습니다."
+        )
+
+    resolved_place = _resolve_must_include_place(place_name, city, travel_style)
+    if resolved_place is None:
+        return _unchanged(
+            f"'{place_name}'을(를) 찾지 못해 일정에 추가하지 못했습니다."
+        )
+
+    target_day_label = f"Day {target_day}"
+    day_indexes = [
+        i for i, entry in enumerate(previous_daily_schedule) if entry.get("day") == target_day_label
+    ]
+    if not day_indexes:
+        return _unchanged(
+            f"{target_day_label} 일정이 없어 '{place_name}'을(를) 추가하지 못했습니다."
+        )
+
+    insert_index = day_indexes[-1] + 1
+
+    used_slots = {previous_daily_schedule[i].get("time_slot") for i in day_indexes}
+    is_restaurant = resolved_place.get("category") == RESTAURANT_CATEGORY
+    slot_order = _MEAL_SLOT_ORDER if is_restaurant else _GENERAL_SLOT_ORDER
+    new_time_slot = next(
+        (slot for slot in slot_order if slot not in used_slots),
+        slot_order[0],
+    )
+
+    new_place_name = _get_place_name(resolved_place)
+    new_entry = {
+        "day": target_day_label,
+        "time_slot": new_time_slot,
+        "place": new_place_name,
+        "place_name": new_place_name,
+        "reason": resolved_place.get("reason") or "사용자가 요청한 필수 방문 장소입니다.",
+        "route_memo": "이전 장소와의 동선을 고려해 배치했습니다.",
+        "address": resolved_place.get("address", ""),
+        "image_url": resolved_place.get("image_url", ""),
+        "latitude": resolved_place.get("latitude"),
+        "longitude": resolved_place.get("longitude"),
+        "content_id": resolved_place.get("content_id"),
+        "source": resolved_place.get("source"),
+        "category": resolved_place.get("category"),
+        "content_type_id": resolved_place.get("content_type_id"),
+    }
+
+    new_schedule = (
+        previous_daily_schedule[:insert_index]
+        + [new_entry]
+        + previous_daily_schedule[insert_index:]
+    )
+
+    warnings: List[str] = []
+    new_segments: List[RouteSegment] = []
+    new_place = _place_from_schedule_entry(new_entry)
+
+    if insert_index > 0:
+        prev_place = _place_from_schedule_entry(previous_daily_schedule[insert_index - 1])
+        routes, route_warnings = _build_real_routes(
+            selected_places=[prev_place, new_place], transport_mode=transport_mode
+        )
+        warnings.extend(route_warnings)
+        if routes:
+            new_segments.extend(routes)
+            new_entry["route_memo"] = (
+                f"{routes[0]['from']}에서 {routes[0]['estimated_time']} 이동합니다."
+            )
+    else:
+        new_entry["route_memo"] = "여행의 첫 방문 장소입니다."
+
+    if insert_index < len(previous_daily_schedule):
+        next_place = _place_from_schedule_entry(previous_daily_schedule[insert_index])
+        routes, route_warnings = _build_real_routes(
+            selected_places=[new_place, next_place], transport_mode=transport_mode
+        )
+        warnings.extend(route_warnings)
+        if routes:
+            new_segments.extend(routes)
+
+    prefix = previous_route_summary[: insert_index - 1] if insert_index > 0 else []
+    suffix = previous_route_summary[insert_index:]
+    new_route_summary = list(prefix) + new_segments + list(suffix)
+
+    reconstructed_places = [_place_from_schedule_entry(entry) for entry in new_schedule]
+    lodging_place = next(
+        (p for p in reconstructed_places if p.get("category") == LODGING_CATEGORY), None
+    )
+
+    return {
+        "candidate_places": [resolved_place],
+        "rag_ranked_places": [],
+        "related_places": [],
+        "selected_places": reconstructed_places,
+        "route_summary": new_route_summary,
+        "daily_schedule": new_schedule,
+        "lodging_place": lodging_place,
+        "data_source": previous_result.get("condition_summary", {}).get("data_source", "rag"),
+        "warnings": warnings + [
+            f"{target_day_label} {new_time_slot}에 '{new_place_name}'을(를) 새로 추가했습니다."
         ],
     }

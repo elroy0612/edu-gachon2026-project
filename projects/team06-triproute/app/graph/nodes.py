@@ -8,6 +8,7 @@ from app.agents.financial import build_financial_summary
 from app.agents.route_planner import (
     _parse_travel_days,
     build_incremental_route_plan,
+    build_named_place_insertion_route_plan,
     build_place_move_route_plan,
     build_route_plan,
     build_slot_replacement_route_plan,
@@ -51,8 +52,11 @@ def parse_node(state: TripRouteState) -> Dict[str, Any]:
         "target_time_slot": parsed.get("target_time_slot"),
         "move_source_day": parsed.get("move_source_day"),
         "move_source_time_slot": parsed.get("move_source_time_slot"),
+        "move_source_place_name": parsed.get("move_source_place_name"),
         "move_destination_day": parsed.get("move_destination_day"),
         "move_destination_time_slot": parsed.get("move_destination_time_slot"),
+        "add_place_name": parsed.get("add_place_name"),
+        "add_place_day": parsed.get("add_place_day"),
         "daily_preferences": parsed.get("daily_preferences", []),
         "parser": parser,
         "warnings": list(parse_warnings),
@@ -74,10 +78,13 @@ def route_planner_node(state: TripRouteState) -> Dict[str, Any]:
 
     같은 도시에 대한 기간 연장 후속 요청("3일로 늘려줘")이면 build_incremental_route_plan으로
     기존 Day 일정은 유지한 채 늘어난 날짜만 새로 채우고, 장소 이동 후속 요청("2일차 관광지를
-    1일차로 옮겨줘")이면 build_place_move_route_plan으로 그 장소를 목적지로 옮기고(목적지에
-    있던 기존 장소는 빠짐) 비게 된 원래 자리는 새로 검색한 장소로 채우며, 슬롯 교체 후속
-    요청("2일차 점심만 바꿔줘")이면 build_slot_replacement_route_plan으로 그 슬롯 하나만
-    새 장소로 바꾼다. 셋 다 아니면 처음부터 다시 계획한다.
+    1일차로 옮겨줘" 또는 원본 날짜 없이 이름만 말한 "안목해변을 3일차로 옮겨줘")이면
+    build_place_move_route_plan으로 그 장소를 목적지로 옮기고(목적지에 있던 기존 장소는
+    빠짐) 비게 된 원래 자리는 새로 검색한 장소로 채우며, 날짜 지정 장소 추가 후속 요청
+    ("2일차에 국립경주박물관 꼭 추가해줘")이면 build_named_place_insertion_route_plan으로
+    기존 일정은 그대로 두고 그 날짜 끝에 새 장소를 하나 끼워 넣으며, 슬롯 교체 후속 요청
+    ("2일차 점심만 바꿔줘")이면 build_slot_replacement_route_plan으로 그 슬롯 하나만
+    새 장소로 바꾼다. 넷 다 아니면 처음부터 다시 계획한다.
     """
     parsed = {
         "city": state.get("city"),
@@ -120,12 +127,23 @@ def route_planner_node(state: TripRouteState) -> Dict[str, Any]:
     )
 
     move_source_day = state.get("move_source_day")
+    move_source_place_name = state.get("move_source_place_name")
     move_destination_day = state.get("move_destination_day")
     is_place_move = (
         not is_duration_extension
         and previous_result is not None
-        and move_source_day is not None
+        and (move_source_day is not None or move_source_place_name)
         and move_destination_day is not None
+    )
+
+    add_place_name = state.get("add_place_name")
+    add_place_day = state.get("add_place_day")
+    is_named_insertion = (
+        not is_duration_extension
+        and not is_place_move
+        and previous_result is not None
+        and add_place_name
+        and add_place_day is not None
     )
 
     if is_duration_extension:
@@ -144,8 +162,18 @@ def route_planner_node(state: TripRouteState) -> Dict[str, Any]:
             previous_result=previous_result,
             source_day=move_source_day,
             source_time_slot=state.get("move_source_time_slot"),
+            source_place_name=move_source_place_name,
             destination_day=move_destination_day,
             destination_time_slot=state.get("move_destination_time_slot"),
+        )
+    elif is_named_insertion:
+        route_plan = build_named_place_insertion_route_plan(
+            parsed=parsed,
+            transport_mode=state["transport_mode"],
+            people_count=state["people_count"],
+            previous_result=previous_result,
+            place_name=add_place_name,
+            target_day=add_place_day,
         )
     elif is_slot_replacement:
         route_plan = build_slot_replacement_route_plan(

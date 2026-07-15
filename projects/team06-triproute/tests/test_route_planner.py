@@ -1259,3 +1259,112 @@ def test_build_route_plan_applies_daily_preferences_per_day(monkeypatch):
     assert any(name.startswith("액티비티장소") for name in day2_places)
     assert not any(name.startswith("액티비티장소") for name in day1_places)
     assert any(name.startswith("바다장소") for name in day1_places)
+
+
+def test_search_day_partitioned_candidates_places_must_include_on_specified_day(monkeypatch):
+    # 취향 검색 결과는 매 호출마다 서로 다른(전역 유일한) 후보를 주도록 카운터를 쓴다 —
+    # 이름이 겹치면 _exclude_existing이 걸러내서 폴백 로직까지 타게 되어 이 테스트의
+    # 관심사(필수 장소가 지정한 날짜의 슬롯 맨 앞에 오는지)와 무관한 경로가 섞이게 된다.
+    counter = iter(range(1, 100))
+
+    def fake_search_rag_places(city, travel_style, prefer_local, max_places):
+        return [
+            {
+                "name": f"일반후보{next(counter)}", "title": "일반후보", "content_id": str(next(counter)),
+                "address": "", "longitude": 128.9, "latitude": 37.7, "category": "관광지",
+            }
+            for _ in range(max_places)
+        ]
+
+    monkeypatch.setattr(route_planner, "_search_rag_places", fake_search_rag_places)
+    monkeypatch.setattr(route_planner, "_fill_missing_place_details", lambda places: places)
+
+    must_include_place = {
+        "name": "국립경주박물관", "title": "국립경주박물관", "content_id": "999",
+        "address": "", "longitude": 128.9, "latitude": 37.7, "category": "관광지",
+    }
+
+    time_slots = [("Day 1", "오전"), ("Day 1", "오후"), ("Day 2", "오전"), ("Day 2", "오후")]
+
+    candidates, _ = route_planner._search_day_partitioned_candidates(
+        city="경주",
+        time_slots=time_slots,
+        travel_style=["문화"],
+        prefer_local=False,
+        day_travel_style_overrides={},
+        day_must_include_places={2: [must_include_place]},
+    )
+
+    names = [c["name"] for c in candidates]
+    # Day 1은 2슬롯 모두 일반 취향 검색 결과, Day 2는 필수 장소가 맨 앞 슬롯에 오고
+    # 남은 1슬롯만 취향 검색으로 채워져야 한다 (musts가 다음 날짜로 안 밀려나감).
+    assert len(names) == 4
+    assert names[:2] == ["일반후보1", "일반후보3"]
+    assert names[2] == "국립경주박물관"
+    assert names[3].startswith("일반후보")
+
+
+def test_build_route_plan_places_must_include_on_daily_preferences_day(monkeypatch):
+    def fake_retrieve(taste_text, match_count, city):
+        return [
+            {
+                "content_id": str(i), "title": f"일반장소{i}", "address": "강원특별자치도 강릉시",
+                "category": "관광지", "longitude": 128.90 + i * 0.001, "latitude": 37.70 + i * 0.001,
+            }
+            for i in range(1, 6)
+        ]
+
+    def fake_search_keyword(keyword=None, content_type_id=None, num_of_rows=20, page_no=1):
+        # _resolve_must_include_place가 "경주 오죽헌테스트전용" 같은 조합으로 조회할 때만
+        # 결과를 준다. 그 외(음식점/숙박 폴백 등)는 빈 리스트로 막아둔다.
+        if keyword and "오죽헌테스트전용" in keyword:
+            return [
+                {
+                    "contentid": "888", "title": "오죽헌테스트전용", "addr1": "강원특별자치도 강릉시",
+                    "mapx": "128.9", "mapy": "37.7", "contenttypeid": "12",
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(route_planner, "retrieve_places_by_taste", fake_retrieve)
+    monkeypatch.setattr(route_planner, "search_keyword", fake_search_keyword)
+    monkeypatch.setattr(
+        route_planner,
+        "get_detail_common",
+        lambda content_id: {
+            "mapx": "128.9", "mapy": "37.7", "lDongRegnCd": "51", "lDongSignguCd": "150",
+            "addr1": "강원특별자치도 강릉시",
+        },
+    )
+    monkeypatch.setattr(route_planner, "get_route", lambda origin, destination: {})
+    monkeypatch.setattr(
+        route_planner,
+        "summarize_route",
+        lambda route: {
+            "distance_km": 1.0, "duration_min": 10, "taxi_fare": 5000, "toll_fare": 0,
+        },
+    )
+    monkeypatch.setattr(route_planner, "get_course_content_ids", lambda city, **kwargs: [])
+
+    result = route_planner.build_route_plan(
+        parsed={
+            "city": "강릉",
+            "duration": "1박 2일",
+            "travel_style": ["바다"],
+            "prefer_local": False,
+            "schedule_intensity": "여유로운 일정",
+            "daily_preferences": [
+                {"day": 2, "must_include_places": ["오죽헌테스트전용"]},
+            ],
+        },
+        transport_mode="대중교통",
+        people_count=2,
+    )
+
+    day1_places = {e["place_name"] for e in result["daily_schedule"] if e["day"] == "Day 1"}
+    day2_places = {e["place_name"] for e in result["daily_schedule"] if e["day"] == "Day 2"}
+
+    # "2일차에는 오죽헌테스트전용 가고 싶어"(처음 계획 요청)가 실제로 Day 2에 배치되고,
+    # Day 1에는 섞여 들어가지 않아야 한다.
+    assert "오죽헌테스트전용" in day2_places
+    assert "오죽헌테스트전용" not in day1_places
